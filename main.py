@@ -19,6 +19,21 @@ from sendemail import Email
 from requests import session, post, adapters
 adapters.DEFAULT_RETRIES = 5
 
+
+def random_get_infojson(folder='./position_bank'):
+    json_list = os.listdir(folder)
+    res = []
+    for json_file in json_list:
+        if  '.json' in json_file:
+            res.append(json_file)
+    choice = random.choice(res)
+
+    with open(os.path.join(folder,choice),'r',encoding='utf8')as fp:
+        json_data = json.load(fp)
+    print('choosed json file : ',json_data)
+    return json_data
+
+
 class Fudan:
     """
     建立与复旦服务器的会话，执行登录/登出操作
@@ -135,10 +150,17 @@ class Fudan:
 
 
 class Zlapp(Fudan):
-    last_info = ''
-    save_info = ''
-    submit_time = None
-    is_submit = False
+
+
+    def __init__(self, uid, psw,url_login,url_code,**kargs):
+        super().__init__(uid, psw,url_login, url_code)  # 显式调用基类
+        self.last_info = ''
+        self.save_info = ''
+        self.submit_time = None
+        self.is_submit = False
+        self.random_choose=kargs['random_choose'] if 'random_choose' in kargs else False
+        self.save_position=kargs['save_position'] if 'save_position' in kargs else False
+        self.sleep_time=kargs['sleep_time'] if 'sleep_time' in kargs else 0
 
     def check(self):
         """
@@ -148,6 +170,30 @@ class Zlapp(Fudan):
         get_info = self.session.get(
             'https://zlapp.fudan.edu.cn/ncov/wap/fudan/get-info')
         last_info = get_info.json()
+
+        '''
+        last_info = {'e':0,
+                    'm':操作成功,
+                    'd':{'info' : {},
+                        'isConfirm':True,
+                        'oldInfo':{},
+                        'hasFlag':True,
+                        'uinfo':学生信息，不需改变,
+                        'isFirst':False,
+                        'setting':小程序设定，无需关注,
+                        'date':2022-10-28,
+                        'his':学生其他信息，不需改变,
+                        'env':'FUDAN-ZLAPP'}
+                    }
+        '''
+
+        if self.save_position:
+            position = last_info["d"]["info"]['geo_api_info']
+            position = json_loads(position)
+            today = time.strftime("%Y%m%d", time.localtime())
+            f2 = open('./position_bank/position_{}.json'.format(today),'w')
+            f2.write(json.dumps(position))
+            f2.close()
 
         print("◉上一次提交日期为:", last_info["d"]["info"]["date"])
         # 地区从oldInfo中提取
@@ -219,21 +265,14 @@ class Zlapp(Fudan):
         # 随机等待 0-10 分钟
 
         self.submit_time = datetime.now().strftime('%Y.%m.%d-%H:%M:%S')
-        
-        province = self.last_info["province"]
-        city = self.last_info["city"]
-        area = self.last_info["area"]
-        if area == "其他国家":
-            gwszdd = self.last_info["gwszdd"]
+        if self.random_choose:
+            self.last_info = random_get_infojson()
         else:
-            geo_api_info = json_loads(self.last_info["geo_api_info"])
-            district = geo_api_info["addressComponent"].get("district", "")
-        
-        while(True):
-            print("◉正在识别验证码......")
-            code = self.validate_code()
-            print("◉验证码为:", code)
+            province = self.last_info["province"]
+            city = self.last_info["city"]
+            area = self.last_info["area"]
             if area == "其他国家":
+                gwszdd = self.last_info["gwszdd"]
                 self.last_info.update(
                     {
                         "tw": "13",
@@ -247,6 +286,8 @@ class Zlapp(Fudan):
                     }
                 )
             else:
+                geo_api_info = json_loads(self.last_info["geo_api_info"])
+                district = geo_api_info["addressComponent"].get("district", "")
                 self.last_info.update(
                     {
                         "tw": "13",
@@ -258,7 +299,12 @@ class Zlapp(Fudan):
                         "code": code,
                     }
                 )
-            # print(self.last_info)
+
+        while(True):
+            print("◉正在识别验证码......")
+            code = self.validate_code()
+            print("◉验证码为:", code)
+
             save = self.session.post(
                 'https://zlapp.fudan.edu.cn/ncov/wap/fudan/save',
                 data=self.last_info,
@@ -304,14 +350,20 @@ def get_account():
 
     return uid, psw
 
-def main():
+
+def main(random_choose=False,save_position=False,sleep_time=30):
     uid, psw = get_account()
     # print(uid, psw)
     zlapp_login = 'https://uis.fudan.edu.cn/authserver/login?' \
                   'service=https://zlapp.fudan.edu.cn/site/ncov/fudanDaily'
     code_url = "https://zlapp.fudan.edu.cn/backend/default/code"
     daily_fudan = Zlapp(uid, psw,
-                        url_login=zlapp_login, url_code=code_url)
+                        url_login=zlapp_login, 
+                        url_code=code_url,
+                        random_choose=random_choose,
+                        save_position=save_position,
+                        sleep_time=sleep_time
+                        )
     daily_fudan.login()
 
     daily_fudan.check()
@@ -321,7 +373,6 @@ def main():
         # 再检查一遍
         daily_fudan.check()
     
-
     try:
         save_info = daily_fudan.save_info
         submit_time = daily_fudan.submit_time
@@ -347,7 +398,7 @@ def main():
 
 if __name__ == '__main__':
     try:
-        main()
+        main(random_choose=False,save_position=False,sleep_time=30)
     except:
         # 中间有任何一个环节出现问题都要发邮件通知我
         content = 'There are some mistakes happened ！'
