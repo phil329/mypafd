@@ -211,6 +211,9 @@ class Zlapp(Fudan):
 
         print("\n\n◉◉提交中")
         
+        time.sleep(random.randint(0,30*60))
+        # 随机等待 0-30 分钟
+        
         province = self.last_info["province"]
         city = self.last_info["city"]
         area = self.last_info["area"]
